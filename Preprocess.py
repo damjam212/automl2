@@ -1,7 +1,8 @@
 import pickle
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from scipy.fft import fft
-
+from sklearn.decomposition import PCA
+import pandas as pd
 #-------------------------------------------------------------------------------------------------
 #                                Loading
 #-------------------------------------------------------------------------------------------------
@@ -126,8 +127,19 @@ class PaddingEstimator(BaseEstimator, TransformerMixin):
                 
         return X, y
 
+class PCADimensionReducer(BaseEstimator, TransformerMixin):
+    def __init__(self, n_components=50):
+        self.n_components = n_components
+        self.pca = PCA(n_components=self.n_components)
 
+    def fit(self, X, y=None):
+        # Dopasowujemy PCA do danych
+        self.pca.fit(X)
+        return self
 
+    def transform(self, X, y=None):
+        # Transformujemy dane, aby uzyskać 50 głównych składowych
+        return self.pca.transform(X)
 class WindowFeatureExtractor(BaseEstimator, TransformerMixin):
     def __init__(self, window_size, step_size):
         self.window_size = window_size
@@ -138,35 +150,50 @@ class WindowFeatureExtractor(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X, y=None):
+        # Sprawdzamy, czy X to DataFrame
+        if isinstance(X, pd.DataFrame):
+            # Konwertujemy DataFrame na numpy array
+            X = X.values
+        
         features = []
 
-        for seq in X:
-            for start_idx in range(0, seq.shape[0] - self.window_size + 1, self.step_size):
-                end_idx = start_idx + self.window_size
-                window = seq[start_idx:end_idx]
+        # Iterujemy po próbkach w danych
+        for start_idx in range(0, X.shape[0] - self.window_size + 1, self.step_size):
+            end_idx = start_idx + self.window_size
+            window = X[start_idx:end_idx]
+            
+            window_features = []
+            for sample in window.T:  # Transponujemy, aby iterować po kolumnach
+                # Statystyki opisowe
+                mean = np.mean(sample)
+                std = np.std(sample)
+                min_val = np.min(sample)
+                max_val = np.max(sample)
+                median = np.median(sample)
+                
+                # Różnice pierwszego rzędu
+                diff = np.diff(sample)
+                mean_diff = np.mean(diff)
+                std_diff = np.std(diff)
+    
+                # FFT (transformacja Fouriera)
+                fft_values = np.abs(fft(sample))
+                fft_mean = np.mean(fft_values)
+                fft_std = np.std(fft_values)
+    
+                # Dodajemy cechy do okna
+                window_features.extend([mean, std, min_val, max_val, median, mean_diff, std_diff, fft_mean, fft_std])
+            
+            features.append(window_features)
+        
+        # Zwracamy wynik jako DataFrame z odpowiednimi nazwami kolumn
+        return pd.DataFrame(features)
 
-                window_features = []
-                for sample in window:
-                    mean = np.mean(sample)
-                    std = np.std(sample)
-                    min_val = np.min(sample)
-                    max_val = np.max(sample)
-                    median = np.median(sample)
 
-                    diff = np.diff(sample)
-                    mean_diff = np.mean(diff)
-                    std_diff = np.std(diff)
 
-                    fft_values = np.abs(fft(sample))
-                    fft_mean = np.mean(fft_values)
-                    fft_std = np.std(fft_values)
-
-                    window_features.extend([mean, std, min_val, max_val, median, mean_diff, std_diff, fft_mean, fft_std])
-
-                features.append(window_features)
-
-        return np.array(features)
-
+import numpy as np
+import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 
 class WindowLabelProcessor(BaseEstimator, TransformerMixin):
     def __init__(self, window_size, step):
@@ -178,21 +205,41 @@ class WindowLabelProcessor(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, y):
+        # Sprawdzamy, czy y to DataFrame
+        if isinstance(y, pd.DataFrame):
+            # Konwertujemy DataFrame na numpy array
+            y = y.values
+        
         window_labels = []
-
-        for seq in y:
-            for start in range(0, seq.shape[0] - self.window_size + 1, self.step):
-                end = start + self.window_size
-                window = seq[start:end]
-
-                window_label = (np.sum(window == 1, axis=0) >= 5).astype(int)
-                window_labels.append(window_label)
-
+        
+        # Iterujemy po próbkach w danych
+        for start in range(0, y.shape[0] - self.window_size + 1, self.step):
+            end = start + self.window_size
+            window = y[start:end]  # Wyciągamy okno
+            
+            # Dla każdej klasy (kolumny) w oknie, jeśli występuje co najmniej 5 '1', ustawiamy etykietę tej klasy na '1'
+            window_label = (np.sum(window == 1, axis=0) >= 5).astype(int)  # Zwracamy wektor 10-elementowy
+            window_labels.append(window_label)
+        
+        # Zwracamy wynik jako numpy array
         return np.array(window_labels)
 
 
 
 
+def process_labels_with_window_2d(y, window_size, step):
+    window_labels = []
+    
+    # Iterujemy po próbkach w danych
+    for start in range(0, y.shape[0] - window_size + 1, step):
+        end = start + window_size
+        window = y[start:end]  # Wyciągamy okno
+        
+        # Dla każdej klasy (kolumny) w oknie, jeśli występuje co najmniej 5 '1', ustawiamy etykietę tej klasy na '1'
+        window_label = (np.sum(window == 1, axis=0) >= 5).astype(int)  # Zwracamy wektor 10-elementowy
+        window_labels.append(window_label)
+    
+    return np.array(window_labels)
 
 
 
